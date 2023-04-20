@@ -1,9 +1,14 @@
+mod config;
+mod redirect;
+mod tracer;
+
 use std::{
     env,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, SocketAddr}
 };
 
 use axum::{extract::ConnectInfo, routing::get, Router, Server};
+use redirect::{redirect_http_to_https, Ports};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Initializes the tracing subscriber with default values
@@ -12,7 +17,7 @@ pub fn init_tracing_subscriber() {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "tower_http=info,info".into()),
+                .unwrap_or_else(|_| "tower_http=info,info".into())
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
@@ -27,9 +32,8 @@ pub async fn run(app: Router<()>) {
     let port = env::var("APP_PORT").unwrap_or("3000".into());
 
     let address = SocketAddr::new(
-        host.parse()
-            .unwrap_or(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))),
-        port.parse().unwrap_or(3000),
+        host.parse().unwrap_or(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))),
+        port.parse().unwrap_or(3000)
     );
 
     let server =
@@ -44,6 +48,8 @@ pub async fn run(app: Router<()>) {
 async fn main() {
     dotenv::dotenv().ok();
     init_tracing_subscriber();
+
+    tokio::spawn(redirect_http_to_https(Ports::new(80, 443)));
 
     let app = Router::<()>::new().route("/", get(root));
 
