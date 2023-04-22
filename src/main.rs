@@ -2,56 +2,56 @@ mod config;
 mod redirect;
 mod tracer;
 
-use std::{
-    env,
-    net::{IpAddr, Ipv4Addr, SocketAddr}
-};
+use std::net::SocketAddr;
 
-use axum::{extract::ConnectInfo, routing::get, Router, Server};
-use redirect::{redirect_http_to_https, Ports};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use anyhow::Context;
+use axum::{extract::ConnectInfo, routing::get, Router};
+use axum_server::tls_rustls::RustlsConfig;
+use redirect::redirect_http_to_https;
+use tracer::init_tracing_subscriber;
 
-/// Initializes the tracing subscriber with default values
-#[tracing::instrument]
-pub fn init_tracing_subscriber() {
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "tower_http=info,info".into())
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
-}
+use crate::config::Config;
 
 pub async fn root(ConnectInfo(info): ConnectInfo<SocketAddr>) {
     dbg!(info);
 }
 
-pub async fn run(app: Router<()>) {
-    let host = env::var("APP_HOST").unwrap_or("127.0.0.1".into());
-    let port = env::var("APP_PORT").unwrap_or("3000".into());
+pub async fn run(app: Router<()>, config: Config) -> anyhow::Result<()> {
+    let addr = config.get_addr();
 
-    let address = SocketAddr::new(
-        host.parse().unwrap_or(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))),
-        port.parse().unwrap_or(3000)
+    let tls_config = RustlsConfig::from_pem_file(config.cert_path(), config.cert_key_path())
+        .await
+        .with_context(|| "couldn't find PEM certificate")?;
+
+    tracing::info!(
+        "certificate and key loaded from path {} and {}",
+        config.cert_path().display(),
+        config.cert_key_path().display()
     );
 
-    let server =
-        Server::bind(&address).serve(app.into_make_service_with_connect_info::<SocketAddr>());
+    tracing::info!(%addr, "serving");
 
-    if let Err(_) = server.await {
-        println!("server error");
+    let server = axum_server::bind_rustls(addr, tls_config)
+        .serve(app.into_make_service_with_connect_info::<SocketAddr>());
+
+    if let Err(e) = server.await {
+        tracing::info!("error running server: {e}");
     }
+
+    Ok(())
 }
 
 #[tokio::main]
-async fn main() {
-    dotenv::dotenv().ok();
-    init_tracing_subscriber();
+async fn main() -> anyhow::Result<()> {
+    dotenv::from_path("example.env")?;
 
-    tokio::spawn(redirect_http_to_https(Ports::new(80, 443)));
+    let config = Config::try_from_env()?;
+
+    let _guard = init_tracing_subscriber()?;
+
+    tokio::spawn(redirect_http_to_https(config.ports()));
 
     let app = Router::<()>::new().route("/", get(root));
 
-    run(app).await;
+    run(app, config).await
 }

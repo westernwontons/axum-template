@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use axum::extract::Host;
 use axum::handler::HandlerWithoutStateExt;
 use axum::http::{uri, StatusCode, Uri};
@@ -24,7 +22,7 @@ impl Ports {
 /// Redirect http to https
 ///
 /// Stolen from: https://github.com/tokio-rs/axum/blob/main/examples/tls-rustls/src/main.rs
-pub async fn redirect_http_to_https(ports: Ports) {
+pub async fn redirect_http_to_https(ports: Ports) -> anyhow::Result<()> {
     fn make_https(host: String, uri: Uri, ports: Ports) -> Result<Uri, BoxError> {
         let mut parts = uri.into_parts();
 
@@ -57,5 +55,10 @@ pub async fn redirect_http_to_https(ports: Ports) {
     let addr = SocketAddr::from(([0, 0, 0, 0], ports.http));
     tracing::debug!("http redirect listening on {}", addr);
 
-    axum::Server::bind(&addr).serve(redirect.into_make_service()).await.unwrap()
+    axum::Server::try_bind(&addr)?
+        .serve(redirect.into_make_service())
+        .await
+        .unwrap();
+
+    Ok(())
 }
